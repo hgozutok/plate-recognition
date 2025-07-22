@@ -1,7 +1,7 @@
 import sqlite3
 from contextlib import contextmanager
 
-DATABASE_PATH = 'plates.db'
+DATABASE_PATH = '/app/data.db'
 
 @contextmanager
 def get_db():

@@ -27,7 +27,7 @@ export default function Upload() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await axios.post(`${API_URL}/api/detect`, formData);
+      const response = await axios.post(`${API_URL}/detect`, formData);
       setResult(response.data);
     } catch (error) {
       console.error("Upload failed:", error);

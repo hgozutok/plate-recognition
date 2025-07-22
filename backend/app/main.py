@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 import io
+from .plate_detection import process_image_file
 
 app = FastAPI()
 
@@ -25,7 +26,7 @@ app.mount("/captures", StaticFiles(directory="captures"), name="captures")
 
 # Database initialization
 def init_db():
-    conn = sqlite3.connect('plates.db')
+    conn = sqlite3.connect('/app/data.db')
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS plates (
@@ -57,7 +58,7 @@ async def detect_plate(file: UploadFile = File(...)):
         contents = await file.read()
         
         # Process the image and get results
-        plate_number, debug_image, plate_region = process_image_file(contents)
+        plate_number, debug_image, plate_region, confidence = process_image_file(contents)
         
         # Generate filenames
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -75,7 +76,7 @@ async def detect_plate(file: UploadFile = File(...)):
             plate_region.save(plate_filepath)
         
         # Save to database
-        conn = sqlite3.connect('plates.db')
+        conn = sqlite3.connect('/app/data.db')
         c = conn.cursor()
         c.execute(
             "INSERT INTO plates (plate_number, image_path) VALUES (?, ?)",
@@ -88,7 +89,8 @@ async def detect_plate(file: UploadFile = File(...)):
             "success": True,
             "plate_number": plate_number,
             "debug_image": debug_filename,
-            "plate_image": plate_filename if plate_region else None
+            "plate_image": plate_filename if plate_region else None,
+            "confidence": confidence
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -96,7 +98,7 @@ async def detect_plate(file: UploadFile = File(...)):
 @app.get("/api/history")
 async def get_history():
     try:
-        conn = sqlite3.connect('plates.db')
+        conn = sqlite3.connect('/app/data.db')
         c = conn.cursor()
         c.execute("SELECT * FROM plates ORDER BY capture_time DESC")
         rows = c.fetchall()

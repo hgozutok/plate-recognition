@@ -21,18 +21,23 @@ def clean_plate_text(text: str) -> Optional[str]:
     4. Must match common plate patterns
     5. No more than 4 consecutive numbers or letters
     """
+    print(f"DEBUG: clean_plate_text input: '{text}'")
+    
     # Remove whitespace and newlines
     text = text.strip().replace('\n', ' ').replace('\r', '')
     
     # Convert to uppercase and remove any special characters
     text = re.sub(r'[^A-Z0-9]', '', text.upper())
+    print(f"DEBUG: After cleaning: '{text}'")
     
-    # Basic length validation
-    if len(text) < 5 or len(text) > 8:
+    # Basic length validation (more flexible for Turkish plates)
+    if len(text) < 4 or len(text) > 15:  # More lenient
+        print(f"DEBUG: Length validation failed: {len(text)}")
         return None
         
     # Must contain at least one letter and one number
     if not (re.search(r'[A-Z]', text) and re.search(r'[0-9]', text)):
+        print(f"DEBUG: Must contain letters and numbers")
         return None
     
     # Replace commonly confused characters
@@ -44,9 +49,11 @@ def clean_plate_text(text: str) -> Optional[str]:
     
     # Common plate patterns including Turkish plates
     common_patterns = [
-        # Turkish plate patterns
+        # Turkish plate patterns (more flexible)
         r'^[0-9]{2}[A-Z]{1,3}[0-9]{2,4}$',  # Turkish format: 34ABC123, 06AB123
         r'^[0-9]{2}[A-Z]{1,3}[0-9]{2}$',     # Turkish format: 34ABC12
+        r'^[0-9]{2}[A-Z]{2}[0-9]{3}$',       # Turkish format: 20DT185
+        r'^[0-9]{2}[A-Z]{2}[0-9]{2,4}$',     # Turkish format: 20DT185, 20DT1855
         # Standard international patterns
         r'^[A-Z]{2,3}[0-9]{2,4}$',           # AA1234, ABC123
         r'^[0-9]{2,4}[A-Z]{2,3}$',           # 1234AA, 123ABC
@@ -66,7 +73,19 @@ def clean_plate_text(text: str) -> Optional[str]:
             return None
     
     # Check if the text matches any common pattern
-    if not any(re.match(pattern, text) for pattern in common_patterns):
+    pattern_matched = False
+    for i, pattern in enumerate(common_patterns):
+        if re.match(pattern, text):
+            print(f"DEBUG: Matched pattern {i+1}: {pattern}")
+            pattern_matched = True
+            break
+    
+    if not pattern_matched:
+        print(f"DEBUG: No pattern matched for: '{text}'")
+        # For debugging, let's be more lenient and return the text anyway if it looks reasonable
+        if len(text) >= 5 and len(text) <= 10:
+            print(f"DEBUG: Returning text despite no pattern match")
+            return text
         return None
     
     # Additional validation for similar characters
@@ -103,6 +122,7 @@ def preprocess_image(image: np.ndarray) -> np.ndarray:
         cv2.THRESH_BINARY_INV,
         13,  # Increased block size for better handling of Turkish plates
         4    # Adjusted constant for better contrast
+    )
     
     # Apply morphological operations to remove small noise
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
@@ -401,6 +421,7 @@ def detect_plate(image: np.ndarray) -> Tuple[str, np.ndarray, Optional[np.ndarra
     
     # Find plate contour
     plate_contour = find_plate_contour(processed)
+    print(f"DEBUG: Plate contour found: {plate_contour is not None}")
     
     if plate_contour is not None:
         # Draw the detected plate region on debug image
@@ -412,31 +433,92 @@ def detect_plate(image: np.ndarray) -> Tuple[str, np.ndarray, Optional[np.ndarra
         
         # Perform OCR on the enhanced region
         try:
-            # Configure Tesseract for single character recognition
-            custom_config = r'--oem 3 --psm 10 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+            print(f"DEBUG: Processing plate region with shape: {enhanced_region.shape}")
             
-            # Segment characters
-            char_regions = segment_characters(enhanced_region)
+            # Try multiple OCR configurations for better Turkish plate recognition
+            configs = [
+                r'--oem 3 --psm 8 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                r'--oem 3 --psm 7 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                r'--oem 3 --psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789',
+                r'--oem 3 --psm 13 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+            ]
             
-            if not char_regions:
-                return "NO_PLATE", debug_image, enhanced_region, 0.0
+            best_result = None
+            best_confidence = 0.0
             
-            # Perform parallel character recognition
-            plate_text, confidence = recognize_characters_parallel(char_regions, custom_config)
+            for i, config in enumerate(configs):
+                try:
+                    print(f"DEBUG: Trying OCR config {i+1}: {config}")
+                    
+                    # Get OCR data
+                    data = pytesseract.image_to_data(
+                        enhanced_region,
+                        config=config,
+                        output_type=pytesseract.Output.DICT
+                    )
+                    
+                    # Extract text and confidence
+                    texts = []
+                    confidences = []
+                    for j, text in enumerate(data['text']):
+                        conf = int(data['conf'][j]) if data['conf'][j] != '-1' else 0
+                        if text.strip() and conf > 20:  # Lower threshold
+                            texts.append(text.strip())
+                            confidences.append(conf)
+                            print(f"DEBUG: Found text '{text.strip()}' with confidence {conf}")
+                    
+                    if texts:
+                        combined_text = ''.join(texts).upper()
+                        avg_confidence = sum(confidences) / len(confidences) / 100.0
+                        print(f"DEBUG: Combined text: '{combined_text}', avg confidence: {avg_confidence:.2f}")
+                        
+                        # Clean the text
+                        cleaned_text = clean_plate_text(combined_text)
+                        print(f"DEBUG: Cleaned text: '{cleaned_text}'")
+                        
+                        if cleaned_text and avg_confidence > best_confidence:
+                            best_result = cleaned_text
+                            best_confidence = avg_confidence
+                            print(f"DEBUG: New best result: '{best_result}' with confidence {best_confidence:.2f}")
+                    
+                    # Also try simple string extraction
+                    simple_text = pytesseract.image_to_string(enhanced_region, config=config).strip().upper()
+                    simple_text = re.sub(r'[^A-Z0-9]', '', simple_text)
+                    if simple_text and len(simple_text) >= 4:
+                        print(f"DEBUG: Simple OCR result: '{simple_text}'")
+                        cleaned_simple = clean_plate_text(simple_text)
+                        if cleaned_simple:
+                            print(f"DEBUG: Cleaned simple result: '{cleaned_simple}'")
+                            if not best_result or len(cleaned_simple) > len(best_result):
+                                best_result = cleaned_simple
+                                best_confidence = 0.5  # Assign moderate confidence
+                        else:
+                            # If clean failed, try some basic corrections
+                            corrected = simple_text.replace('8', 'B').replace('6', 'G').replace('5', 'S').replace('1', 'I').replace('0', 'O')
+                            corrected_clean = clean_plate_text(corrected)
+                            if corrected_clean:
+                                print(f"DEBUG: Corrected result: '{corrected_clean}'")
+                                if not best_result:
+                                    best_result = corrected_clean
+                                    best_confidence = 0.4
+                                
+                except Exception as e:
+                    print(f"DEBUG: OCR config {i+1} failed: {str(e)}")
+                    continue
             
-            # Clean and validate the detected text
-            plate_number = clean_plate_text(plate_text)
+            print(f"DEBUG: Final result: '{best_result}' with confidence {best_confidence:.2f}")
             
-            if plate_number is None or confidence < 0.60:  # Minimum 60% confidence required
-                return "NO_PLATE", debug_image, enhanced_region, confidence
-                
-            return plate_number, debug_image, enhanced_region, confidence
+            if best_result and best_confidence > 0.20:  # Even lower threshold
+                return best_result, debug_image, enhanced_region, best_confidence
+            else:
+                # If no good result, return whatever we found for debugging
+                return best_result or "NO_PLATE", debug_image, enhanced_region, best_confidence
             
         except Exception as e:
             print(f"OCR Error: {str(e)}")
-            return "OCR_ERROR", debug_image, enhanced_region
+            return "OCR_ERROR", debug_image, enhanced_region, 0.0
     
-    return "NO_PLATE", debug_image, None
+    return "NO_PLATE", debug_image, None, 0.0
 
 def process_image_file(file_contents: bytes) -> Tuple[str, Image.Image, Optional[Image.Image], float]:
     """
@@ -452,7 +534,7 @@ def process_image_file(file_contents: bytes) -> Tuple[str, Image.Image, Optional
     image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
     # Run detection
-    plate_number, debug_image, plate_region = detect_plate(image)
+    plate_number, debug_image, plate_region, confidence = detect_plate(image)
     
     # Convert OpenCV images to PIL
     debug_pil = Image.fromarray(cv2.cvtColor(debug_image, cv2.COLOR_BGR2RGB))
@@ -461,4 +543,4 @@ def process_image_file(file_contents: bytes) -> Tuple[str, Image.Image, Optional
         plate_pil = Image.fromarray(plate_region)
         return plate_number, debug_pil, plate_pil, confidence
     
-    return plate_number, debug_pil, None, 0.0
+    return plate_number, debug_pil, None, confidence

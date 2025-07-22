@@ -19,7 +19,7 @@ export default function WebcamPage() {
       const formData = new FormData();
       formData.append("file", blob, "capture.jpg");
 
-      const response = await axios.post(`${API_URL}/api/detect`, formData);
+      const response = await axios.post(`${API_URL}/detect`, formData);
       setResult(response.data);
     } catch (error) {
       console.error("Capture failed:", error);
