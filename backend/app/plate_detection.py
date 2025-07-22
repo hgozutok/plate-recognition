@@ -88,7 +88,7 @@ def clean_plate_text(text: str) -> Optional[str]:
             return text
         return None
     
-    # Additional validation for similar characters
+    # Additional validation for similar characters   
     if any(pair in text for pair in ['B8', '5S', '2Z']):
         # Apply extra validation or confidence check for these cases
         pass

@@ -3,6 +3,8 @@ from contextlib import contextmanager
 
 DATABASE_PATH = '/app/data.db'
 
+
+
 @contextmanager
 def get_db():
     conn = sqlite3.connect(DATABASE_PATH)
